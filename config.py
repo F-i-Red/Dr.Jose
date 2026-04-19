@@ -1,46 +1,38 @@
 # config.py
-import os
 from pathlib import Path
 from dotenv import load_dotenv
+import os
 
-# Carregar variáveis de ambiente
 load_dotenv()
 
 class Config:
-    """Configuração centralizada da aplicação"""
-    
-    # Paths
+    # === Diretórios ===
     BASE_DIR = Path(__file__).parent
     DATA_DIR = BASE_DIR / "data"
     LEIS_DIR = DATA_DIR / "leis"
-    CHROMA_DB_DIR = DATA_DIR / "chroma_db"
-    LOGS_DIR = BASE_DIR / "logs"
+    CHROMA_DIR = DATA_DIR / "chroma"
     
-    # ChromaDB
-    CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 1500))
-    CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 200))
-    
-    # OpenRouter
+    # === OpenRouter Config (ATUALIZADO) ===
     OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-    OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "mistralai/mistral-7b-instruct")
     OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
     
-    # RAG
-    TOP_K_RESULTS = int(os.getenv("TOP_K_RESULTS", 5))
-    SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", 0.6))
+    # Modelos recomendados (escolhe um):
+    # Opção 1: Claude 3.5 Sonnet (melhor qualidade, mas pode custar créditos)
+    OPENROUTER_MODEL = "anthropic/claude-3.5-sonnet"
     
-    # Validação
-    @classmethod
-    def validate(cls):
-        """Valida configurações essenciais"""
-        if not cls.OPENROUTER_API_KEY:
-            raise ValueError("OPENROUTER_API_KEY não definida no ficheiro .env")
+    # Opção 2: Modelo gratuito / barato (se quiseres evitar custos)
+    # OPENROUTER_MODEL = "google/gemini-flash-1.5"   # ou "deepseek/deepseek-chat:free"
+    
+    def validate(self):
+        if not self.OPENROUTER_API_KEY:
+            raise ValueError("OPENROUTER_API_KEY não encontrada no ficheiro .env")
+        if not self.OPENROUTER_API_KEY.startswith("sk-or-"):
+            raise ValueError("A chave OpenRouter parece inválida (deve começar com sk-or-)")
         
-        # Criar diretórios necessários
-        for dir_path in [cls.LEIS_DIR, cls.CHROMA_DB_DIR, cls.LOGS_DIR]:
-            dir_path.mkdir(parents=True, exist_ok=True)
-        
-        return True
+        # Cria pastas necessárias
+        self.DATA_DIR.mkdir(exist_ok=True)
+        self.LEIS_DIR.mkdir(exist_ok=True)
+        self.CHROMA_DIR.mkdir(exist_ok=True)
 
 # Instância global
 config = Config()
