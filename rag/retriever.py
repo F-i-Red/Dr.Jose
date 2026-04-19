@@ -1,118 +1,132 @@
-"""
-Dr. José — Motor de Pesquisa Semântica (RAG)
-=============================================
-Pesquisa os fragmentos de lei mais relevantes para
-uma dada pergunta, usando similaridade semântica.
-"""
-
-import os
+# rag/retriever.py
 import sys
 from pathlib import Path
+from typing import List, Dict, Any, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from dotenv import load_dotenv
-import chromadb
-from chromadb.utils import embedding_functions
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
 
-load_dotenv()
+from config import config
+from utils.logger import setup_logger
 
-CHROMA_DIR      = Path(os.getenv("CHROMA_DIR", "data/chroma_db"))
-COLLECTION      = os.getenv("CHROMA_COLLECTION", "legislacao_portuguesa")
-RAG_TOP_K       = int(os.getenv("RAG_TOP_K", "5"))
-EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+logger = setup_logger(__name__)
 
-
-class Retriever:
-    """Pesquisa semântica na base de conhecimento jurídico."""
-
+class LegalRetriever:
+    """Motor de busca semântica para legislação portuguesa"""
+    
     def __init__(self):
-        if not CHROMA_DIR.exists():
-            raise FileNotFoundError(
-                f"Base vetorial não encontrada em '{CHROMA_DIR}'.\n"
-                "Executa primeiro: python scripts/ingest.py"
-            )
-
-        cliente = chromadb.PersistentClient(path=str(CHROMA_DIR))
-
-        ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name=EMBEDDING_MODEL
+        self.embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2",
+            model_kwargs={'device': 'cpu'}
         )
-
-        self.colecao = cliente.get_collection(
-            name=COLLECTION,
-            embedding_function=ef,
-        )
-
-        print(f"✅ Base jurídica carregada — {self.colecao.count()} fragmentos indexados.")
-
-    def pesquisar(self, pergunta: str, k: int = RAG_TOP_K) -> list[dict]:
+        self.vectorstore = None
+        self._initialize_vectorstore()
+    
+    def _initialize_vectorstore(self):
+        """Inicializa a base vetorial se existir"""
+        try:
+            if config.CHROMA_DB_DIR.exists() and any(config.CHROMA_DB_DIR.iterdir()):
+                self.vectorstore = Chroma(
+                    persist_directory=str(config.CHROMA_DB_DIR),
+                    embedding_function=self.embeddings
+                )
+                logger.info("Base vetorial carregada com sucesso")
+            else:
+                logger.warning(f"Base vetorial não encontrada em {config.CHROMA_DB_DIR}")
+                logger.info("Executa 'python scripts/ingest.py' primeiro")
+        except Exception as e:
+            logger.error(f"Erro ao carregar base vetorial: {str(e)}")
+            self.vectorstore = None
+    
+    def retrieve(self, query: str, k: int = None) -> List[Dict[str, Any]]:
         """
-        Pesquisa os k fragmentos mais relevantes para a pergunta.
-
-        Retorna lista de dicionários:
-            [{"texto": "...", "fonte": "...", "score": 0.92}, ...]
+        Recupera documentos relevantes para a query
+        
+        Args:
+            query: Pergunta do utilizador
+            k: Número de resultados (default do config)
+        
+        Returns:
+            Lista de dicionários com conteúdo e metadados
         """
-        resultados = self.colecao.query(
-            query_texts=[pergunta],
-            n_results=min(k, self.colecao.count()),
-            include=["documents", "metadatas", "distances"],
-        )
-
-        fragmentos = []
-        docs      = resultados["documents"][0]
-        metadados = resultados["metadatas"][0]
-        distancias = resultados["distances"][0]
-
-        for doc, meta, dist in zip(docs, metadados, distancias):
-            score = 1 - dist  # converter distância cosine em similaridade
-            fragmentos.append({
-                "texto":  doc,
-                "fonte":  meta.get("fonte", "desconhecida"),
-                "chunk":  meta.get("chunk", 0),
-                "score":  round(score, 4),
-            })
-
-        # Ordenar por relevância decrescente
-        fragmentos.sort(key=lambda x: x["score"], reverse=True)
-        return fragmentos
-
-    def formatar_contexto(self, pergunta: str, k: int = RAG_TOP_K) -> str:
+        if not self.vectorstore:
+            logger.error("Base vetorial não disponível")
+            return []
+        
+        k = k or config.TOP_K_RESULTS
+        
+        try:
+            # Busca por similaridade
+            results = self.vectorstore.similarity_search_with_score(query, k=k)
+            
+            # Filtrar por threshold de similaridade
+            filtered_results = []
+            for doc, score in results:
+                if score >= config.SIMILARITY_THRESHOLD:
+                    filtered_results.append({
+                        'content': doc.page_content,
+                        'metadata': doc.metadata,
+                        'similarity_score': score
+                    })
+            
+            logger.info(f"Query: '{query[:50]}...' -> {len(filtered_results)} resultados (threshold: {config.SIMILARITY_THRESHOLD})")
+            
+            return filtered_results
+            
+        except Exception as e:
+            logger.error(f"Erro na recuperação: {str(e)}")
+            return []
+    
+    def get_context(self, query: str, max_chars: int = 3000) -> str:
         """
-        Devolve um bloco de texto formatado com os fragmentos mais relevantes,
-        pronto a inserir no prompt do Dr. José.
+        Formata os resultados recuperados como contexto para a LLM
+        
+        Args:
+            query: Pergunta do utilizador
+            max_chars: Máximo de caracteres do contexto
+        
+        Returns:
+            String formatada com o contexto
         """
-        fragmentos = self.pesquisar(pergunta, k)
-
-        if not fragmentos:
-            return "Não foram encontrados documentos relevantes na base de conhecimento."
-
-        linhas = ["## Legislação Relevante Encontrada\n"]
-
-        for i, f in enumerate(fragmentos, 1):
-            linhas.append(f"### [{i}] Fonte: {f['fonte']} (relevância: {f['score']:.0%})")
-            linhas.append(f["texto"])
-            linhas.append("")
-
-        return "\n".join(linhas)
-
-
-# ── Teste rápido ──────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    print("Teste do Retriever RAG\n" + "=" * 40)
-
-    retriever = Retriever()
-
-    perguntas_teste = [
-        "O que é um crime de furto?",
-        "Quais são os direitos fundamentais dos cidadãos?",
-        "O que diz a lei sobre violência doméstica?",
-    ]
-
-    for pergunta in perguntas_teste:
-        print(f"\n🔍 Pergunta: {pergunta}")
-        resultados = retriever.pesquisar(pergunta, k=2)
-        for r in resultados:
-            print(f"  📄 {r['fonte']} — score: {r['score']:.2f}")
-            print(f"     {r['texto'][:120]}...")
+        results = self.retrieve(query)
+        
+        if not results:
+            return "Nenhum documento relevante encontrado na base de conhecimento."
+        
+        context_parts = []
+        total_chars = 0
+        
+        for i, result in enumerate(results, 1):
+            metadata = result['metadata']
+            content = result['content']
+            score = result['similarity_score']
+            
+            # Formatar metadados
+            source = metadata.get('source', 'documento')
+            article = metadata.get('article', '')
+            
+            header = f"[Documento {i}] Fonte: {source}"
+            if article:
+                header += f" | {article}"
+            header += f" (relevância: {score:.2f})\n"
+            
+            entry = header + content.strip() + "\n"
+            
+            if total_chars + len(entry) > max_chars:
+                # Cortar se exceder
+                remaining = max_chars - total_chars
+                if remaining > 200:  # Só adiciona se sobrar espaço útil
+                    entry = entry[:remaining] + "...\n"
+                else:
+                    break
+            
+            context_parts.append(entry)
+            total_chars += len(entry)
+        
+        return "\n---\n".join(context_parts)
+    
+    def is_ready(self) -> bool:
+        """Verifica se o retriever está pronto para uso"""
+        return self.vectorstore is not None
