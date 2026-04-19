@@ -1,227 +1,260 @@
-"""
-Dr. José — Assistente Jurídico
-================================
-Classe principal que combina o RAG (base de conhecimento)
-com o modelo de linguagem via OpenRouter para gerar
-respostas jurídicas fundamentadas em lei portuguesa.
-
-Pode ser usado:
-  - Pela API (bot/api.py)
-  - Diretamente na linha de comandos
-"""
-
-import os
+# bot/jose.py
 import sys
 from pathlib import Path
+from typing import List, Dict, Any
+from datetime import datetime
+import json
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from dotenv import load_dotenv
+from config import config
+from rag.retriever import LegalRetriever
+from utils.logger import setup_logger
 from openai import OpenAI
 
-load_dotenv()
+logger = setup_logger(__name__)
 
-# ── Configuração ──────────────────────────────────────────────────────────────
+class DrJoseBot:
+    """Assistente jurídico português Dr. José"""
+    
+    SYSTEM_PROMPT = """Tu és o Dr. José, um assistente jurídico especializado em direito português.
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet")
-RAG_TOP_K          = int(os.getenv("RAG_TOP_K", "5"))
-CHROMA_DIR         = Path(os.getenv("CHROMA_DIR", "data/chroma_db"))
+REGRAS IMPORTANTES:
+1. Baseia as tuas respostas APENAS no contexto jurídico fornecido
+2. Se a informação não estiver no contexto, diz claramente que não tens essa informação
+3. Cita sempre os artigos e diplomas legais quando possível
+4. Lembra que és um assistente informativo, NÃO substituis aconselhamento jurídico profissional
+5. Usa linguagem clara e acessível, explicando termos técnicos quando necessário
+6. Se a pergunta for ambígua, pede esclarecimentos adicionais
+7. NUNCA inventas artigos ou informações - se não sabes, dizes que não sabes
 
-SYSTEM_PROMPT = """És o Dr. José, um assistente jurídico especializado exclusivamente em direito português.
-O teu objetivo é ajudar cidadãos e profissionais a compreender a lei portuguesa de forma clara e acessível.
+RESPONSABILIDADE LEGAL:
+Inclui sempre esta nota para perguntas jurídicas específicas:
+"⚠️ Nota: Esta é uma resposta informativa baseada em legislação portuguesa. Para situações concretas, consulta sempre um advogado inscrito na Ordem dos Advogados."
 
-Conheces profundamente:
-- A Constituição da República Portuguesa (CRP)
-- O Código Penal Português (CP)
-- O Código Civil
-- O Código do Trabalho
-- O Código de Processo Penal (CPP)
-- O Código de Processo Civil (CPC)
-- A Lei do Arrendamento Urbano (NRAU)
-- E restante legislação portuguesa em vigor
-
-Regras obrigatórias:
-1. Responde SEMPRE em português de Portugal (nunca brasileiro)
-2. Cita artigos específicos quando relevante (ex: "Art.º 203.º do CP")
-3. Quando tens contexto de legislação fornecido, baseia a resposta nesse contexto
-4. Explica de forma clara, evitando jargão excessivo desnecessário
-5. Menciona prazos legais quando aplicável
-6. Termina SEMPRE com: "⚠️ Esta informação é de caráter geral. Para o seu caso específico, consulte um advogado."
-7. Para situações urgentes (detenção, acusação criminal), aconselha contactar imediatamente a Ordem dos Advogados: 213 241 300
-8. Podes referenciar entidades: Ordem dos Advogados, DGAJ, Provedoria de Justiça, Ministério Público
-9. Se a pergunta não for de âmbito jurídico, explica que só respondes a questões legais
-10. Nunca inventes artigos ou leis — se não souberes, diz que não tens informação suficiente"""
-
-
-class DrJose:
-    """Assistente jurídico Dr. José."""
-
+Formato da resposta:
+1. Resposta direta à questão
+2. Fundamentação legal (artigos/diplomas citados)
+3. Nota de responsabilidade (quando aplicável)
+"""
+    
     def __init__(self):
-        self._retriever = None
-        self._cliente_llm = None
-        self._inicializar()
-
-    def _inicializar(self):
-        """Inicializa o cliente LLM e tenta carregar o RAG."""
-        # Cliente OpenRouter (compatível com API OpenAI)
-        if OPENROUTER_API_KEY:
-            self._cliente_llm = OpenAI(
-                base_url="https://openrouter.ai/api/v1",
-                api_key=OPENROUTER_API_KEY,
-            )
-        else:
-            print("⚠️  OPENROUTER_API_KEY não configurada. Respostas sem LLM.")
-
-        # Tentar carregar RAG (pode não existir ainda)
-        if CHROMA_DIR.exists():
-            try:
-                from rag.retriever import Retriever
-                self._retriever = Retriever()
-            except Exception as e:
-                print(f"⚠️  RAG não disponível: {e}")
-                print("   Execute primeiro: python scripts/ingest.py")
-        else:
-            print("⚠️  Base vetorial não encontrada. A funcionar sem RAG.")
-            print("   Execute: python scripts/ingest.py")
-
-    def base_disponivel(self) -> bool:
-        """Verifica se a base de conhecimento RAG está disponível."""
-        return self._retriever is not None
-
-    def total_fragmentos(self) -> int:
-        """Devolve o número de fragmentos indexados."""
-        if self._retriever:
-            return self._retriever.colecao.count()
-        return 0
-
-    def responder(self, pergunta: str, historico: list[dict] = None) -> dict:
-        """
-        Gera uma resposta jurídica para a pergunta.
-
-        Args:
-            pergunta:  Questão do utilizador.
-            historico: Lista de mensagens anteriores [{role, content}, ...]
-
-        Returns:
-            {"resposta": str, "fontes": list[str]}
-        """
-        if historico is None:
-            historico = []
-
-        # 1. Pesquisar legislação relevante (RAG)
-        contexto_legal = ""
-        fontes = []
-
-        if self._retriever:
-            try:
-                fragmentos = self._retriever.pesquisar(pergunta, k=RAG_TOP_K)
-                fontes = list({f["fonte"] for f in fragmentos})
-
-                if fragmentos:
-                    linhas = ["## Legislação Relevante\n"]
-                    for i, f in enumerate(fragmentos, 1):
-                        linhas.append(f"### [{i}] {f['fonte']} (relevância: {f['score']:.0%})")
-                        linhas.append(f["texto"])
-                        linhas.append("")
-                    contexto_legal = "\n".join(linhas)
-            except Exception as e:
-                print(f"Aviso: Erro no RAG: {e}")
-
-        # 2. Construir prompt com contexto legal
-        if contexto_legal:
-            pergunta_aumentada = (
-                f"{contexto_legal}\n"
-                f"---\n"
-                f"Com base na legislação acima, responde à seguinte questão:\n\n"
-                f"{pergunta}"
-            )
-        else:
-            pergunta_aumentada = (
-                f"Responde à seguinte questão jurídica com base no teu conhecimento "
-                f"do direito português:\n\n{pergunta}\n\n"
-                f"(Nota: a base de conhecimento local não está disponível neste momento)"
-            )
-
-        # 3. Construir mensagens para o LLM
-        mensagens = [{"role": "system", "content": SYSTEM_PROMPT}]
-
-        # Adicionar histórico (sem o contexto RAG, apenas perguntas/respostas limpas)
-        for msg in historico[-10:]:  # Últimas 5 trocas
-            mensagens.append(msg)
-
-        mensagens.append({"role": "user", "content": pergunta_aumentada})
-
-        # 4. Chamar o LLM
-        if not self._cliente_llm:
-            return {
-                "resposta": "⚠️ O serviço de IA não está configurado. Adicione a OPENROUTER_API_KEY no ficheiro .env",
-                "fontes": [],
-            }
-
+        """Inicializa o bot"""
+        logger.info("Inicializando Dr. José...")
+        
+        # Validar configuração
         try:
-            completion = self._cliente_llm.chat.completions.create(
-                model=OPENROUTER_MODEL,
-                messages=mensagens,
-                max_tokens=1500,
-                temperature=0.3,  # Baixo para mais precisão jurídica
-            )
-            resposta = completion.choices[0].message.content
+            config.validate()
         except Exception as e:
-            resposta = f"Erro ao gerar resposta: {str(e)}"
+            logger.error(f"Erro de configuração: {e}")
+            print(f"\n❌ Erro: {e}")
+            print("Verifica o ficheiro .env com a OPENROUTER_API_KEY")
+            sys.exit(1)
+        
+        # Inicializar componentes
+        self.retriever = LegalRetriever()
+        self.conversation_history = []
+        self.client = OpenAI(
+            base_url=config.OPENROUTER_BASE_URL,
+            api_key=config.OPENROUTER_API_KEY,
+        )
+        
+        # Verificar se o retriever está pronto
+        if not self.retriever.is_ready():
+            logger.warning("Base vetorial não encontrada!")
+            print("\n⚠️ Aviso: Base vetorial não encontrada!")
+            print(f"   Executa: python scripts/ingest.py")
+            print("   O bot vai funcionar apenas com conhecimento geral.\n")
+    
+    def sanitize_input(self, user_input: str) -> str:
+        """Sanitiza o input do utilizador para prevenir prompt injection"""
+        # Remover tentativas de system prompt override
+        dangerous_patterns = [
+            "ignore previous instructions",
+            "ignore the above",
+            "system:",
+            "you are now",
+            "forget your",
+            "new role:",
+        ]
+        
+        user_input_lower = user_input.lower()
+        for pattern in dangerous_patterns:
+            if pattern in user_input_lower:
+                logger.warning(f"Possível prompt injection bloqueada: {user_input[:50]}")
+                return "⚠️ [Input bloqueado por razões de segurança]"
+        
+        # Limitar tamanho
+        if len(user_input) > 2000:
+            user_input = user_input[:2000] + "..."
+        
+        return user_input.strip()
+    
+    def get_response(self, user_input: str) -> str:
+        """Gera resposta baseada no contexto recuperado"""
+        
+        # Sanitizar input
+        user_input = self.sanitize_input(user_input)
+        if user_input.startswith("⚠️"):
+            return user_input
+        
+        # Recuperar contexto
+        context = self.retriever.get_context(user_input)
+        
+        # Construir mensagens
+        messages = [
+            {"role": "system", "content": self.SYSTEM_PROMPT}
+        ]
+        
+        # Adicionar contexto se disponível
+        if context and "nenhum documento" not in context:
+            messages.append({
+                "role": "user",
+                "content": f"""Contexto jurídico recuperado:
+{context}
 
-        return {
-            "resposta": resposta,
-            "fontes": fontes,
-        }
+Pergunta do utilizador: {user_input}
 
+Com base APENAS no contexto acima, responde de forma clara e fundamentada."""
+            })
+        else:
+            messages.append({
+                "role": "user",
+                "content": f"""Não foi encontrado contexto jurídico específico para: {user_input}
 
-# ── Interface de linha de comandos ────────────────────────────────────────────
+Responde honestamente que não tens informação específica sobre este tópico na tua base de conhecimento, sugerindo que o utilizador consulte um advogado ou fontes oficiais."""
+            })
+        
+        # Adicionar histórico (últimas 3 interações)
+        for turn in self.conversation_history[-3:]:
+            messages.append({"role": "user", "content": turn["user"]})
+            messages.append({"role": "assistant", "content": turn["assistant"]})
+        
+        try:
+            # Chamar API com retry
+            for attempt in range(3):
+                try:
+                    response = self.client.chat.completions.create(
+                        model=config.OPENROUTER_MODEL,
+                        messages=messages,
+                        temperature=0.3,
+                        max_tokens=1000,
+                        timeout=30
+                    )
+                    answer = response.choices[0].message.content
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        raise
+                    logger.warning(f"Tentativa {attempt+1} falhou: {e}")
+            
+            # Guardar no histórico
+            self.conversation_history.append({
+                "user": user_input,
+                "assistant": answer,
+                "timestamp": datetime.now().isoformat()
+            })
+            
+            # Limitar histórico
+            if len(self.conversation_history) > 10:
+                self.conversation_history = self.conversation_history[-10:]
+            
+            return answer
+            
+        except Exception as e:
+            logger.error(f"Erro na API: {str(e)}")
+            return f"""❌ Erro ao contactar o assistente: {str(e)}
+
+Por favor, verifica:
+1. A tua chave API da OpenRouter no ficheiro .env
+2. A tua ligação à internet
+3. Se o modelo {config.OPENROUTER_MODEL} está disponível
+
+Tenta novamente mais tarde."""
+    
+    def run(self):
+        """Interface de linha de comando"""
+        print("\n" + "="*60)
+        print("⚖️  Dr. José - Assistente Jurídico Português  ⚖️")
+        print("="*60)
+        print("\n📚 Especializado em: CRP | Código Penal | Código Civil | Código do Trabalho")
+        print("⚠️  Aviso: Este assistente NÃO substitui aconselhamento jurídico profissional")
+        print("\n💡 Comandos especiais:")
+        print("   /ajuda     - Mostrar esta mensagem")
+        print("   /contexto  - Ver contexto recuperado para a última pergunta")
+        print("   /historico - Ver histórico da conversa")
+        print("   /limpar    - Limpar histórico")
+        print("   /sair      - Sair do programa")
+        print("\n" + "-"*60)
+        
+        last_context = None
+        
+        while True:
+            try:
+                user_input = input("\n👤 Você: ").strip()
+                
+                if not user_input:
+                    continue
+                
+                # Comandos especiais
+                if user_input.lower() == '/sair':
+                    print("\n👋 Dr. José: Até breve! Lembra-te: em caso de dúvida jurídica, consulta sempre um advogado.")
+                    break
+                
+                elif user_input.lower() == '/ajuda':
+                    print("\n📖 Dr. José: Sou um assistente jurídico baseado em RAG. Pergunta-me sobre direito português!")
+                    print("   Exemplos: 'Quais os prazos para impugnação de uma multa?', 'O que diz o artigo 217º do Código Penal?'")
+                    continue
+                
+                elif user_input.lower() == '/limpar':
+                    self.conversation_history.clear()
+                    print("\n🧹 Dr. José: Histórico da conversa limpo!")
+                    continue
+                
+                elif user_input.lower() == '/historico':
+                    if not self.conversation_history:
+                        print("\n📝 Dr. José: Ainda não há histórico de conversas.")
+                    else:
+                        print(f"\n📝 Histórico das últimas {len(self.conversation_history)} interações:")
+                        for i, turn in enumerate(self.conversation_history[-5:], 1):
+                            print(f"\n{i}. Você: {turn['user'][:100]}...")
+                            print(f"   Dr. José: {turn['assistant'][:100]}...")
+                    continue
+                
+                elif user_input.lower() == '/contexto':
+                    if last_context:
+                        print(f"\n📚 Contexto recuperado:\n{last_context}")
+                    else:
+                        print("\n📚 Ainda não foi recuperado contexto. Faz uma pergunta primeiro!")
+                    continue
+                
+                # Processar pergunta normal
+                print("\n🤔 Dr. José: A analisar a questão...")
+                
+                # Recuperar contexto para mostrar (opcional)
+                last_context = self.retriever.get_context(user_input)
+                
+                # Obter resposta
+                response = self.get_response(user_input)
+                
+                print(f"\n⚖️  Dr. José:\n{response}")
+                
+            except KeyboardInterrupt:
+                print("\n\n👋 Dr. José: Sessão interrompida. Até breve!")
+                break
+            except Exception as e:
+                logger.error(f"Erro não tratado: {str(e)}")
+                print(f"\n❌ Ocorreu um erro inesperado. Verifica o ficheiro logs/dr_jose.log")
 
 def main():
-    print("=" * 60)
-    print("  ⚖️  Dr. José — Assistente Jurídico Português")
-    print("=" * 60)
-    print("  Escreva a sua questão jurídica.")
-    print("  Comandos: 'sair' para terminar, 'limpar' para nova conversa")
-    print("=" * 60 + "\n")
-
-    jose = DrJose()
-    historico = []
-
-    while True:
-        try:
-            pergunta = input("Você: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\n\nAté logo!")
-            break
-
-        if not pergunta:
-            continue
-
-        if pergunta.lower() in ("sair", "exit", "quit"):
-            print("Até logo!")
-            break
-
-        if pergunta.lower() == "limpar":
-            historico = []
-            print("(Conversa reiniciada)\n")
-            continue
-
-        print("\nDr. José: A consultar legislação...\n")
-
-        resultado = jose.responder(pergunta, historico)
-
-        print(f"Dr. José: {resultado['resposta']}")
-
-        if resultado["fontes"]:
-            print(f"\n📚 Fontes consultadas: {', '.join(resultado['fontes'])}")
-
-        print()
-
-        historico.append({"role": "user", "content": pergunta})
-        historico.append({"role": "assistant", "content": resultado["resposta"]})
-
+    """Ponto de entrada principal"""
+    try:
+        bot = DrJoseBot()
+        bot.run()
+    except Exception as e:
+        logger.critical(f"Falha ao iniciar o bot: {str(e)}")
+        print(f"\n❌ Não foi possível iniciar o Dr. José: {e}")
+        print("Verifica os logs para mais detalhes.")
 
 if __name__ == "__main__":
     main()
