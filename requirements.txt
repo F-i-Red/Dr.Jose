@@ -1,13 +1,10 @@
-# requirements.txt
-langchain==0.1.0
-langchain-community==0.0.10
-chromadb==0.4.22
-sentence-transformers==2.2.2
-PyPDF2==3.0.1
-pypdf==3.17.4
-openai==1.6.1
-python-dotenv==1.0.0
-tiktoken==0.5.2
-requests==2.31.0
-beautifulsoup4==4.12.2
-lxml==4.9.3
+fastapi
+uvicorn
+openai
+python-dotenv
+chromadb
+sentence-transformers
+beautifulsoup4
+lxml
+requests
+PyYAML
