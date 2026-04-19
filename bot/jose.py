@@ -1,111 +1,129 @@
-# bot/jose.py
-import sys
-from pathlib import Path
-from typing import List, Dict, Any
-from datetime import datetime
+import os
+import requests
+from dotenv import load_dotenv
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from config import config
 from rag.retriever import LegalRetriever
-from utils.logger import setup_logger
-from openai import OpenAI
+from utils.logger import get_logger
 
-logger = setup_logger(__name__)
+load_dotenv()
+
+logger = get_logger(__name__)
+
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_BASE_URL = os.getenv(
+    "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+)
+
+if not OPENROUTER_API_KEY:
+    raise RuntimeError(
+        "OPENROUTER_API_KEY não encontrada. Preenche o ficheiro .env."
+    )
+
+# 🔁 Lista de modelos (fallback automático)
+MODELS = [
+    "openai/gpt-3.5-turbo",
+    "anthropic/claude-3-haiku",
+    "meta-llama/llama-3.3-70b-instruct:free",
+]
+
+SYSTEM_PROMPT = """
+És o Dr. José, um assistente jurídico português.
+
+Regras:
+- Especialista em direito português
+- Usa linguagem clara
+- Cita artigos quando possível
+- Nunca inventes leis
+- Se não souberes, diz claramente
+- Termina com: "Esta resposta é informativa e não substitui consulta jurídica profissional."
+""".strip()
+
 
 class DrJoseBot:
-    SYSTEM_PROMPT = """Tu és o Dr. José, um assistente jurídico português especializado em direito português.
-
-Regras obrigatórias:
-- Responde sempre com base no contexto jurídico fornecido.
-- Se não houver contexto suficiente, diz claramente que não tens informação específica.
-- Cita os artigos e diplomas legais sempre que possível.
-- Usa linguagem clara e acessível ao cidadão comum.
-- Nunca inventes leis ou artigos.
-- Termina sempre com esta nota: "Nota: Esta é uma resposta informativa. Não substitui aconselhamento jurídico profissional. Consulta um advogado ou fontes oficiais."
-
-Responde de forma estruturada: resposta direta → fundamentação legal → nota final."""
-
     def __init__(self):
         logger.info("Inicializando Dr. José...")
-        config.validate()
-
         self.retriever = LegalRetriever()
-        self.conversation_history: List[Dict[str, Any]] = []
-        self.client = OpenAI(base_url=config.OPENROUTER_BASE_URL, api_key=config.OPENROUTER_API_KEY)
 
-        if not self.retriever.is_ready():
-            logger.warning("Base de conhecimento vazia. Executa python scripts/ingest.py")
+    def _call_llm(self, messages):
+        last_error = None
 
-    def get_response(self, user_input: str) -> str:
-        context = self.retriever.get_context(user_input)
-
-        messages = [{"role": "system", "content": self.SYSTEM_PROMPT}]
-
-        if context and "nenhum artigo relevante" not in context.lower():
-            messages.append({"role": "user", "content": f"Contexto:\n{context}\n\nPergunta: {user_input}"})
-        else:
-            messages.append({"role": "user", "content": f"Pergunta: {user_input}\nNão encontrei contexto específico na base de leis."})
-
-        # Histórico limitado
-        for turn in self.conversation_history[-3:]:
-            messages.append({"role": "user", "content": turn["user"]})
-            messages.append({"role": "assistant", "content": turn["assistant"]})
-
-        try:
-            response = self.client.chat.completions.create(
-                model=config.OPENROUTER_MODEL,
-                messages=messages,
-                temperature=0.3,
-                max_tokens=1000
-            )
-            answer = response.choices[0].message.content.strip()
-
-            self.conversation_history.append({"user": user_input, "assistant": answer, "timestamp": datetime.now().isoformat()})
-            if len(self.conversation_history) > 10:
-                self.conversation_history = self.conversation_history[-10:]
-
-            return answer
-
-        except Exception as e:
-            logger.error(f"Erro API: {e}")
-            return f"Erro ao contactar o modelo: {str(e)}\nVerifica a chave API e a ligação à internet."
-
-    def run(self):
-        print("\n" + "="*70)
-        print("⚖️  Dr. José - Assistente Jurídico Português")
-        print("="*70)
-        print("Comandos: /ajuda | /historico | /limpar | /sair\n")
-
-        while True:
+        for model in MODELS:
             try:
-                user_input = input("Você: ").strip()
-                if not user_input:
-                    continue
-                if user_input.lower() == '/sair':
-                    print("Dr. José: Até breve!")
-                    break
-                if user_input.lower() == '/ajuda':
-                    print("Pergunte sobre qualquer tema de direito português.")
-                    continue
-                if user_input.lower() == '/limpar':
-                    self.conversation_history.clear()
-                    print("Histórico limpo.")
-                    continue
-                if user_input.lower() == '/historico':
-                    print(f"Histórico ({len(self.conversation_history)} interações)")
-                    continue
+                logger.info(f"Tentando modelo: {model}")
 
-                print("Dr. José: A pensar...")
-                answer = self.get_response(user_input)
-                print(f"\nDr. José: {answer}\n")
+                response = requests.post(
+                    f"{OPENROUTER_BASE_URL}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "messages": messages,
+                        "temperature": 0.3,
+                        "max_tokens": 1000,
+                    },
+                    timeout=30,
+                )
 
-            except KeyboardInterrupt:
-                print("\nAté breve!")
-                break
+                if response.status_code == 200:
+                    data = response.json()
+                    answer = data["choices"][0]["message"]["content"].strip()
+
+                    logger.info(f"Sucesso com modelo: {model}")
+                    return answer
+
+                else:
+                    logger.warning(
+                        f"Modelo falhou ({model}): {response.status_code} - {response.text}"
+                    )
+                    last_error = response.text
+
             except Exception as e:
-                print(f"Erro: {e}")
+                logger.warning(f"Erro no modelo ({model}): {e}")
+                last_error = str(e)
 
+        logger.error("Todos os modelos falharam")
+        return f"Erro: Nenhum modelo disponível.\nÚltimo erro: {last_error}"
+
+    def get_response(self, question: str) -> str:
+        logger.info("A processar pergunta do utilizador...")
+
+        context_chunks = self.retriever.query(question)
+        context = "\n\n".join(context_chunks)
+
+        if not context.strip():
+            context = "Nenhum artigo relevante encontrado."
+
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": f"Contexto legal:\n{context}\n\nPergunta:\n{question}",
+            },
+        ]
+
+        answer = self._call_llm(messages)
+        return answer
+
+
+# Execução direta (modo CLI)
 if __name__ == "__main__":
     bot = DrJoseBot()
-    bot.run()
+
+    print("\n" + "=" * 70)
+    print("⚖️  Dr. José - Assistente Jurídico Português")
+    print("=" * 70)
+    print("Comandos: /ajuda | /historico | /limpar | /sair\n")
+
+    while True:
+        user_input = input("Você: ")
+
+        if user_input.lower() in ["/sair", "sair"]:
+            print("Dr. José: Até breve.")
+            break
+
+        print("Dr. José: A pensar...")
+
+        resposta = bot.get_response(user_input)
+        print(f"\nDr. José: {resposta}\n")
