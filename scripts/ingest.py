@@ -21,7 +21,26 @@ logger = setup_logger(__name__)
 class LegalDocumentProcessor:
     """Processador especializado para documentos jurídicos portugueses"""
     
-    def __init__(self):
+# scripts/ingest.py (versão atualizada - adicionar no início)
+from fetch_laws import LawFetcher
+
+def main():
+    """Função principal com download automático"""
+    logger.info("=== INICIANDO INDEXAÇÃO DE DOCUMENTOS LEGAIS ===")
+    
+    # 1. Buscar leis online primeiro
+    fetcher = LawFetcher()
+    print("\n📡 A verificar atualizações das leis...")
+    
+    if fetcher.fetch_all():
+        print("✅ Leis atualizadas/download concluído")
+    else:
+        print("⚠️ Algumas leis não foram obtidas. Usando ficheiros existentes...")
+    
+    # 2. Continuar com o processamento normal...
+    # (resto do código do ingest.py que já tens)
+        
+        def __init__(self):
         self.embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2",
             model_kwargs={'device': 'cpu'}
