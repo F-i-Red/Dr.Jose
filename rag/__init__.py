@@ -1,3 +1,4 @@
-from .retriever import Retriever
+# rag/__init__.py
+from .retriever import LegalRetriever
 
-__all__ = ["Retriever"]
+__all__ = ["LegalRetriever"]
