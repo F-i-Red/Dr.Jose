@@ -21,3 +21,8 @@ def get_logger(name: str) -> logging.Logger:
     logger.addHandler(handler)
 
     return logger
+
+
+# 🔁 Compatibilidade com código antigo
+def setup_logger(name: str) -> logging.Logger:
+    return get_logger(name)
