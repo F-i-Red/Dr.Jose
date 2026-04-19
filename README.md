@@ -99,31 +99,31 @@ dr-jose/
 
 ├── bot/
 
-│   └── jose.py           # Chatbot principal
+│    └── jose.py           # Chatbot principal
 
 ├── data/
 
-│   ├── leis/             # Ficheiros das leis (.txt)
+│    ├── leis/             # Ficheiros das leis (.txt)
 
-│   └── chroma_db/        # Base vetorial (criada automaticamente)
+│    └── chroma_db/        # Base vetorial (criada automaticamente)
 
 ├── docs/                 # Documentação adicional
 
 ├── rag/
 
-│   └── retriever.py      # Motor de busca semântica
+│    └── retriever.py      # Motor de busca semântica
 
 ├── scripts/
 
-│   ├── ingest.py         # Indexação de documentos
+│    ├── ingest.py         # Indexação de documentos
 
-│   └── fetch_laws.py     # Download automático de leis
+│    └── fetch_laws.py     # Download automático de leis
 
 ├── utils/
 
-│   ├── __init__.py
+│    ├── __init__.py
 
-│   └── logger.py         # Configuração de logs
+│    └── logger.py         # Configuração de logs
 
 ├── logs/                 # Ficheiros de log (criados automaticamente)
 
