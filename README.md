@@ -52,10 +52,10 @@ copy .env.example .env  # Windows
 cp .env.example .env    # Linux/macOS
 ```
 Edita o .env e adiciona:
-
-ini
+```
 OPENROUTER_API_KEY=sk-or-v1-tua-chave-aqui
 OPENROUTER_MODEL=mistralai/mistral-7b-instruct
+```
 
 ### 5. Indexar a legislação
 ```
