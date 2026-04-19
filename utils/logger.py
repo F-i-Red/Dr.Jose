@@ -3,36 +3,32 @@ import logging
 import sys
 from pathlib import Path
 
-def setup_logger(name: str = "dr_jose", level: int = logging.INFO) -> logging.Logger:
-    """Configura e retorna um logger estruturado"""
-    
-    # Criar diretório de logs se não existir
-    log_dir = Path(__file__).parent.parent / "logs"
-    log_dir.mkdir(exist_ok=True)
-    
-    # Configurar logger
+def setup_logger(name: str = __name__):
     logger = logging.getLogger(name)
-    logger.setLevel(level)
-    
-    # Evitar duplicação de handlers
+    logger.setLevel(logging.INFO)
+
+    # Evitar adicionar handlers duplicados
     if logger.handlers:
         return logger
+
+    # Handler para consola com UTF-8 (importante no Windows)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
     
-    # Formato detalhado
+    # Formato sem emojis problemáticos
     formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%H:%M:%S'
     )
-    
-    # Handler para ficheiro
-    file_handler = logging.FileHandler(log_dir / "dr_jose.log")
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    # Handler para ficheiro (com UTF-8)
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    file_handler = logging.FileHandler(log_dir / "dr_jose.log", encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
-    
-    # Handler para consola (mais simples)
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_formatter = logging.Formatter('%(levelname)s: %(message)s')
-    console_handler.setFormatter(console_formatter)
-    logger.addHandler(console_handler)
-    
+
     return logger
