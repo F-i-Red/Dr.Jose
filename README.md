@@ -69,7 +69,13 @@ Este comando:
 
 ✅ Cria a base vetorial para busca semântica
 
-### 6. Iniciar o Dr. José
+### 6. No terminal:
+```
+pip install streamlit
+streamlit run app.py
+```
+
+### 7. Iniciar o Dr. José
 ```
 python bot/jose.py
 ```
