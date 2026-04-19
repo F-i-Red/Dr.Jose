@@ -49,7 +49,7 @@ if prompt := st.chat_input("Faz a tua pergunta jurídica..."):
     with st.chat_message("assistant"):
         with st.spinner("Dr. José a consultar a lei..."):
             bot = DrJoseBot()
-            answer, _ = bot.get_response(prompt)
+            answer = bot.get_response(prompt)
             st.markdown(answer)
     
     st.session_state.messages.append({"role": "assistant", "content": answer})
