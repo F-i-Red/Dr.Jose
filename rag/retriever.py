@@ -1,19 +1,19 @@
+# rag/retriever.py
 import os
+from pathlib import Path
+from typing import List, Optional
 import unicodedata
-from typing import List, Tuple
 
-from chromadb import Client
-from chromadb.config import Settings
+import chromadb
 from sentence_transformers import SentenceTransformer
 
+from config import config
+from utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 def normalize_text(text: str) -> str:
-    """
-    Normaliza texto para reduzir ruído:
-    - Unicode NFKC
-    - remove quebras de linha redundantes
-    - trim espaços
-    """
+    """Normaliza texto para melhor pesquisa."""
     if not text:
         return ""
     text = unicodedata.normalize("NFKC", text)
@@ -22,69 +22,85 @@ def normalize_text(text: str) -> str:
 
 
 class LegalRetriever:
-    def __init__(
-        self,
-        collection_name: str = "leis_portuguesas",
-        persist_directory: str = "data/chroma",
-        model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
-    ) -> None:
-        self._client = Client(
-            Settings(
-                chroma_db_impl="duckdb+parquet",
-                persist_directory=persist_directory,
+    """Retriever jurídico usando ChromaDB PersistentClient (versão atual)"""
+
+    def __init__(self, collection_name: str = "leis_portuguesas"):
+        self.collection_name = collection_name
+        self.persist_directory = config.DATA_DIR / "chroma"
+        self.persist_directory.mkdir(parents=True, exist_ok=True)
+
+        # Novo estilo ChromaDB (PersistentClient)
+        self._client = chromadb.PersistentClient(path=str(self.persist_directory))
+        
+        # Embedding model (multilingue, bom para português)
+        self._embedder = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+        
+        # Criar ou obter coleção
+        try:
+            self._collection = self._client.get_or_create_collection(
+                name=collection_name,
+                metadata={"hnsw:space": "cosine"}
             )
-        )
-        self._collection = self._client.get_or_create_collection(collection_name)
-        self._embedder = SentenceTransformer(model_name)
+            logger.info(f"✅ Coleção '{collection_name}' carregada com sucesso.")
+        except Exception as e:
+            logger.error(f"Erro ao criar coleção: {e}")
+            raise
 
-    def _embed(self, texts: List[str]):
-        texts_norm = [normalize_text(t) for t in texts]
-        return self._embedder.encode(texts_norm, show_progress_bar=False).tolist()
+    def is_ready(self) -> bool:
+        """Verifica se a coleção tem documentos."""
+        try:
+            return self._collection.count() > 0
+        except:
+            return False
 
-    def add_documents(
-        self,
-        docs: List[Tuple[str, str, str]],
-    ) -> None:
-        """
-        docs: lista de tuplos (id, texto, metadata_json_str)
-        """
-        if not docs:
+    def add_documents(self, documents: List[str], metadatas: Optional[List[dict]] = None, ids: Optional[List[str]] = None):
+        """Adiciona documentos à base vetorial."""
+        if not documents:
             return
 
-        ids = [d[0] for d in docs]
-        texts = [normalize_text(d[1]) for d in docs]
-        metadatas = [{"raw": d[2]} for d in docs]
+        if metadatas is None:
+            metadatas = [{} for _ in documents]
+        if ids is None:
+            ids = [f"doc_{i}" for i in range(len(documents))]
 
-        embeddings = self._embed(texts)
+        # Normalizar textos
+        texts_norm = [normalize_text(doc) for doc in documents]
+        
+        # Gerar embeddings
+        embeddings = self._embedder.encode(texts_norm, show_progress_bar=False).tolist()
 
         self._collection.add(
-            ids=ids,
-            documents=texts,
-            metadatas=metadatas,
+            documents=texts_norm,
             embeddings=embeddings,
+            metadatas=metadatas,
+            ids=ids
         )
+        logger.info(f"✅ Adicionados {len(documents)} documentos à base.")
 
-    def query(self, question: str, k: int = 5) -> List[str]:
-        """
-        Devolve até k excertos de lei relevantes.
-        Se nada for encontrado, devolve um fallback explícito.
-        """
-        question_norm = normalize_text(question)
-        if not question_norm:
-            return ["Pergunta vazia. Reformula a tua questão."]
+    def get_context(self, query: str, k: int = 5) -> str:
+        """Recupera contexto relevante para a pergunta."""
+        if not query.strip():
+            return "Nenhum artigo relevante encontrado na base de conhecimento."
 
-        query_emb = self._embed([question_norm])[0]
+        query_norm = normalize_text(query)
+        query_embedding = self._embedder.encode([query_norm], show_progress_bar=False).tolist()
 
         results = self._collection.query(
-            query_embeddings=[query_emb],
+            query_embeddings=query_embedding,
             n_results=k,
+            include=["documents", "metadatas"]
         )
 
-        docs = results.get("documents", [[]])[0] if results else []
-
+        docs = results.get("documents", [[]])[0]
         if not docs:
-            return [
-                "Nenhum artigo relevante foi encontrado na base de conhecimento para esta questão."
-            ]
+            return "Nenhum artigo relevante foi encontrado na base de conhecimento para esta questão."
 
-        return [normalize_text(d) for d in docs]
+        context_parts = []
+        for i, doc in enumerate(docs, 1):
+            context_parts.append(f"--- Documento {i} ---\n{doc.strip()}\n")
+
+        return "\n".join(context_parts)
+
+
+# Para compatibilidade com imports antigos
+Retriever = LegalRetriever
