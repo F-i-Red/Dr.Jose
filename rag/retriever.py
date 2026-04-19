@@ -1,132 +1,90 @@
-# rag/retriever.py
-import sys
-from pathlib import Path
-from typing import List, Dict, Any, Optional
+import os
+import unicodedata
+from typing import List, Tuple
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from chromadb import Client
+from chromadb.config import Settings
+from sentence_transformers import SentenceTransformer
 
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
 
-from config import config
-from utils.logger import setup_logger
+def normalize_text(text: str) -> str:
+    """
+    Normaliza texto para reduzir ruído:
+    - Unicode NFKC
+    - remove quebras de linha redundantes
+    - trim espaços
+    """
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFKC", text)
+    text = text.replace("\r", " ").replace("\n", " ")
+    return " ".join(text.split())
 
-logger = setup_logger(__name__)
 
 class LegalRetriever:
-    """Motor de busca semântica para legislação portuguesa"""
-    
-    def __init__(self):
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-            model_kwargs={'device': 'cpu'}
+    def __init__(
+        self,
+        collection_name: str = "leis_portuguesas",
+        persist_directory: str = "data/chroma",
+        model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+    ) -> None:
+        self._client = Client(
+            Settings(
+                chroma_db_impl="duckdb+parquet",
+                persist_directory=persist_directory,
+            )
         )
-        self.vectorstore = None
-        self._initialize_vectorstore()
-    
-    def _initialize_vectorstore(self):
-        """Inicializa a base vetorial se existir"""
-        try:
-            if config.CHROMA_DB_DIR.exists() and any(config.CHROMA_DB_DIR.iterdir()):
-                self.vectorstore = Chroma(
-                    persist_directory=str(config.CHROMA_DB_DIR),
-                    embedding_function=self.embeddings
-                )
-                logger.info("Base vetorial carregada com sucesso")
-            else:
-                logger.warning(f"Base vetorial não encontrada em {config.CHROMA_DB_DIR}")
-                logger.info("Executa 'python scripts/ingest.py' primeiro")
-        except Exception as e:
-            logger.error(f"Erro ao carregar base vetorial: {str(e)}")
-            self.vectorstore = None
-    
-    def retrieve(self, query: str, k: int = None) -> List[Dict[str, Any]]:
+        self._collection = self._client.get_or_create_collection(collection_name)
+        self._embedder = SentenceTransformer(model_name)
+
+    def _embed(self, texts: List[str]):
+        texts_norm = [normalize_text(t) for t in texts]
+        return self._embedder.encode(texts_norm, show_progress_bar=False).tolist()
+
+    def add_documents(
+        self,
+        docs: List[Tuple[str, str, str]],
+    ) -> None:
         """
-        Recupera documentos relevantes para a query
-        
-        Args:
-            query: Pergunta do utilizador
-            k: Número de resultados (default do config)
-        
-        Returns:
-            Lista de dicionários com conteúdo e metadados
+        docs: lista de tuplos (id, texto, metadata_json_str)
         """
-        if not self.vectorstore:
-            logger.error("Base vetorial não disponível")
-            return []
-        
-        k = k or config.TOP_K_RESULTS
-        
-        try:
-            # Busca por similaridade
-            results = self.vectorstore.similarity_search_with_score(query, k=k)
-            
-            # Filtrar por threshold de similaridade
-            filtered_results = []
-            for doc, score in results:
-                if score >= config.SIMILARITY_THRESHOLD:
-                    filtered_results.append({
-                        'content': doc.page_content,
-                        'metadata': doc.metadata,
-                        'similarity_score': score
-                    })
-            
-            logger.info(f"Query: '{query[:50]}...' -> {len(filtered_results)} resultados (threshold: {config.SIMILARITY_THRESHOLD})")
-            
-            return filtered_results
-            
-        except Exception as e:
-            logger.error(f"Erro na recuperação: {str(e)}")
-            return []
-    
-    def get_context(self, query: str, max_chars: int = 3000) -> str:
+        if not docs:
+            return
+
+        ids = [d[0] for d in docs]
+        texts = [normalize_text(d[1]) for d in docs]
+        metadatas = [{"raw": d[2]} for d in docs]
+
+        embeddings = self._embed(texts)
+
+        self._collection.add(
+            ids=ids,
+            documents=texts,
+            metadatas=metadatas,
+            embeddings=embeddings,
+        )
+
+    def query(self, question: str, k: int = 5) -> List[str]:
         """
-        Formata os resultados recuperados como contexto para a LLM
-        
-        Args:
-            query: Pergunta do utilizador
-            max_chars: Máximo de caracteres do contexto
-        
-        Returns:
-            String formatada com o contexto
+        Devolve até k excertos de lei relevantes.
+        Se nada for encontrado, devolve um fallback explícito.
         """
-        results = self.retrieve(query)
-        
-        if not results:
-            return "Nenhum documento relevante encontrado na base de conhecimento."
-        
-        context_parts = []
-        total_chars = 0
-        
-        for i, result in enumerate(results, 1):
-            metadata = result['metadata']
-            content = result['content']
-            score = result['similarity_score']
-            
-            # Formatar metadados
-            source = metadata.get('source', 'documento')
-            article = metadata.get('article', '')
-            
-            header = f"[Documento {i}] Fonte: {source}"
-            if article:
-                header += f" | {article}"
-            header += f" (relevância: {score:.2f})\n"
-            
-            entry = header + content.strip() + "\n"
-            
-            if total_chars + len(entry) > max_chars:
-                # Cortar se exceder
-                remaining = max_chars - total_chars
-                if remaining > 200:  # Só adiciona se sobrar espaço útil
-                    entry = entry[:remaining] + "...\n"
-                else:
-                    break
-            
-            context_parts.append(entry)
-            total_chars += len(entry)
-        
-        return "\n---\n".join(context_parts)
-    
-    def is_ready(self) -> bool:
-        """Verifica se o retriever está pronto para uso"""
-        return self.vectorstore is not None
+        question_norm = normalize_text(question)
+        if not question_norm:
+            return ["Pergunta vazia. Reformula a tua questão."]
+
+        query_emb = self._embed([question_norm])[0]
+
+        results = self._collection.query(
+            query_embeddings=[query_emb],
+            n_results=k,
+        )
+
+        docs = results.get("documents", [[]])[0] if results else []
+
+        if not docs:
+            return [
+                "Nenhum artigo relevante foi encontrado na base de conhecimento para esta questão."
+            ]
+
+        return [normalize_text(d) for d in docs]
