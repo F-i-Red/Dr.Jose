@@ -23,33 +23,24 @@ REGRAS IMPORTANTES:
 2. Se a informação não estiver no contexto, diz claramente que não tens essa informação.
 3. Cita sempre os artigos e diplomas legais quando possível (ex.: "Artigo 217.º do Código Penal").
 4. És um assistente informativo — NÃO substituis aconselhamento jurídico profissional.
-5. Usa linguagem clara, acessível e educada, explicando termos técnicos quando necessário.
-6. Se a pergunta for ambígua, pede esclarecimentos adicionais.
-7. NUNCA inventas artigos, leis ou informações. Se não souberes, admite-o.
+5. Usa linguagem clara, acessível e educada.
+6. NUNCA inventas artigos ou leis. Se não souberes, admite-o.
 
-RESPONSABILIDADE LEGAL (obrigatória em todas as respostas jurídicas):
-Inclui sempre no final:
-"Nota: Esta é uma resposta informativa baseada em legislação portuguesa. Para situações concretas, consulta sempre um advogado inscrito na Ordem dos Advogados ou fontes oficiais."
-
-Formato recomendado da resposta:
-1. Resposta direta e clara à questão
-2. Fundamentação legal com citações
-3. Nota de responsabilidade"""
+Nota obrigatória no final de respostas jurídicas:
+"Nota: Esta é uma resposta informativa baseada em legislação portuguesa. Para situações concretas, consulta sempre um advogado inscrito na Ordem dos Advogados."
+"""
 
     def __init__(self):
-        """Inicializa o bot"""
         logger.info("Inicializando Dr. José...")
         
-        # Validar configuração
         try:
             config.validate()
         except Exception as e:
             logger.error(f"Erro de configuração: {e}")
             print(f"\nErro: {e}")
-            print("Verifica o ficheiro .env com a OPENROUTER_API_KEY")
+            print("Verifica o ficheiro .env")
             sys.exit(1)
         
-        # Inicializar componentes
         self.retriever = LegalRetriever()
         self.conversation_history: List[Dict[str, Any]] = []
         self.client = OpenAI(
@@ -57,95 +48,60 @@ Formato recomendado da resposta:
             api_key=config.OPENROUTER_API_KEY,
         )
         
-        # Verificar se o retriever está pronto
-        if not self.retriever.is_ready():
-            logger.warning("Base vetorial não encontrada!")
-            print("\nAviso: Base vetorial não encontrada!")
-            print("   Executa primeiro: python scripts/ingest.py")
-            print("   O bot vai funcionar apenas com conhecimento geral.\n")
+        if not self.retriever._collection:
+            logger.warning("Base vetorial ChromaDB não está pronta.")
+            print("\nAviso: Executa primeiro: python scripts/ingest.py")
     
     def sanitize_input(self, user_input: str) -> str:
-        """Sanitiza o input do utilizador para prevenir prompt injection"""
         if not user_input:
             return ""
         
-        dangerous_patterns = [
-            "ignore previous instructions", "ignore the above", "system:",
-            "you are now", "forget your", "new role:", "act as", "roleplay"
-        ]
+        dangerous = ["ignore previous instructions", "ignore the above", "system:", "you are now"]
+        lower = user_input.lower()
+        for d in dangerous:
+            if d in lower:
+                logger.warning("Possível prompt injection bloqueada")
+                return "[Input bloqueado por segurança]"
         
-        user_input_lower = user_input.lower()
-        for pattern in dangerous_patterns:
-            if pattern in user_input_lower:
-                logger.warning(f"Possível prompt injection bloqueada: {user_input[:80]}...")
-                return "[Input bloqueado por razões de segurança]"
-        
-        # Limitar tamanho
         if len(user_input) > 2000:
             user_input = user_input[:2000] + "..."
-        
         return user_input.strip()
     
     def get_response(self, user_input: str) -> str:
-        """Gera resposta baseada no contexto recuperado"""
         user_input = self.sanitize_input(user_input)
         if user_input.startswith("["):
             return user_input
         
-        # Recuperar contexto jurídico
-        context = self.retriever.get_context(user_input)
+        context = self.retriever.get_context(user_input) if hasattr(self.retriever, 'get_context') else ""
         
-        # Construir mensagens para o modelo
-        messages = [
-            {"role": "system", "content": self.SYSTEM_PROMPT}
-        ]
+        messages = [{"role": "system", "content": self.SYSTEM_PROMPT}]
         
-        if context and "nenhum documento relevante" not in context.lower():
+        if context and "nenhum artigo relevante" not in context.lower():
             messages.append({
                 "role": "user",
-                "content": f"""Contexto jurídico recuperado da base de conhecimento portuguesa:
-
-{context}
-
-Pergunta do utilizador: {user_input}
-
-Responde com base APENAS neste contexto. Cita os artigos relevantes quando aplicável."""
+                "content": f"Contexto jurídico:\n{context}\n\nPergunta: {user_input}\nResponde com base apenas neste contexto."
             })
         else:
             messages.append({
                 "role": "user",
-                "content": f"""Não foi encontrado contexto jurídico específico na base de conhecimento para a seguinte pergunta:
-
-{user_input}
-
-Responde de forma honesta, dizendo que não tens informação específica sobre este tópico na tua base atualizada de legislação. Sugere que o utilizador consulte um advogado ou fontes oficiais (DRE, PGDL, etc.)."""
+                "content": f"Pergunta: {user_input}\nNão encontrei informação específica na base de leis. Responde honestamente."
             })
         
-        # Adicionar histórico recente (últimas 3 interações)
+        # Histórico
         for turn in self.conversation_history[-3:]:
             messages.append({"role": "user", "content": turn["user"]})
             messages.append({"role": "assistant", "content": turn["assistant"]})
         
         try:
-            # Chamada à API com retry simples
-            for attempt in range(3):
-                try:
-                    response = self.client.chat.completions.create(
-                        model=config.OPENROUTER_MODEL,
-                        messages=messages,
-                        temperature=0.3,
-                        max_tokens=1200,
-                        timeout=45
-                    )
-                    answer = response.choices[0].message.content.strip()
-                    break
-                except Exception as e:
-                    if attempt == 2:
-                        raise
-                    logger.warning(f"Tentativa {attempt + 1}/3 falhou: {e}")
-                    continue
+            response = self.client.chat.completions.create(
+                model=config.OPENROUTER_MODEL,
+                messages=messages,
+                temperature=0.3,
+                max_tokens=1000,
+                timeout=40
+            )
+            answer = response.choices[0].message.content.strip()
             
-            # Guardar no histórico
             self.conversation_history.append({
                 "user": user_input,
                 "assistant": answer,
@@ -158,93 +114,47 @@ Responde de forma honesta, dizendo que não tens informação específica sobre 
             return answer
             
         except Exception as e:
-            logger.error(f"Erro na chamada à API: {str(e)}")
-            return f"""Ocorreu um erro ao processar a tua pergunta: {str(e)}
-
-Verifica:
-1. Se a chave OPENROUTER_API_KEY está correta no ficheiro .env
-2. A tua ligação à internet
-3. Se o modelo está disponível no OpenRouter
-
-Tenta novamente mais tarde."""
-
+            logger.error(f"Erro API: {e}")
+            return f"Erro ao contactar o modelo: {str(e)}\nVerifica a tua chave API no .env"
+    
     def run(self):
-        """Interface de linha de comando completa"""
-        print("\n" + "=" * 70)
+        print("\n" + "="*65)
         print("⚖️  Dr. José - Assistente Jurídico Português")
-        print("=" * 70)
-        print("Especializado em: Constituição da República Portuguesa, Código Penal,")
-        print("Código Civil, Código do Trabalho e outros diplomas principais.")
-        print("\n⚠️  AVISO: Este assistente NÃO substitui aconselhamento jurídico profissional.")
-        print("\nComandos especiais:")
-        print("   /ajuda      → Mostrar ajuda")
-        print("   /contexto   → Ver contexto da última pergunta")
-        print("   /historico  → Ver histórico recente")
-        print("   /limpar     → Limpar histórico")
-        print("   /sair       → Sair do programa")
-        print("-" * 70)
-        
-        last_context: str = ""
+        print("="*65)
+        print("Comandos: /ajuda | /historico | /limpar | /sair")
+        print("-" * 65)
         
         while True:
             try:
                 user_input = input("\nVocê: ").strip()
-                
                 if not user_input:
                     continue
                 
-                # Comandos especiais
                 if user_input.lower() == '/sair':
-                    print("\nDr. José: Até breve! Em caso de dúvida jurídica séria, consulta sempre um advogado.")
+                    print("\nDr. José: Até breve!")
                     break
-                
                 elif user_input.lower() == '/ajuda':
-                    print("\nDr. José: Podes perguntar-me qualquer coisa sobre direito português.")
-                    print("Exemplos:")
-                    print("   - O que diz o artigo 217.º do Código Penal?")
-                    print("   - Quais são os direitos do arrendatário na lei do arrendamento urbano?")
-                    print("   - Como funciona a prescrição em direito penal?")
+                    print("\nPergunta-me sobre leis portuguesas. Ex: 'O que diz o artigo 32 da CRP?'")
                     continue
-                
                 elif user_input.lower() == '/limpar':
                     self.conversation_history.clear()
-                    print("\nDr. José: Histórico limpo com sucesso.")
+                    print("Histórico limpo.")
                     continue
-                
                 elif user_input.lower() == '/historico':
-                    if not self.conversation_history:
-                        print("\nDr. José: Ainda não há histórico.")
-                    else:
-                        print(f"\nHistórico ({len(self.conversation_history)} interações):")
-                        for i, turn in enumerate(self.conversation_history[-5:], 1):
-                            print(f"\n{i}. Você: {turn['user'][:90]}{'...' if len(turn['user']) > 90 else ''}")
-                            print(f"   Dr. José: {turn['assistant'][:90]}{'...' if len(turn['assistant']) > 90 else ''}")
+                    print(f"Histórico ({len(self.conversation_history)}):")
+                    for i, t in enumerate(self.conversation_history[-3:], 1):
+                        print(f"{i}. {t['user'][:60]}...")
                     continue
                 
-                elif user_input.lower() == '/contexto':
-                    if last_context:
-                        print("\nÚltimo contexto recuperado:")
-                        print(last_context[:1500] + "..." if len(last_context) > 1500 else last_context)
-                    else:
-                        print("\nDr. José: Ainda não existe contexto. Faz primeiro uma pergunta normal.")
-                    continue
-                
-                # Pergunta normal
-                print("\nDr. José: A consultar a legislação...")
+                print("\nDr. José: A pensar...")
                 answer = self.get_response(user_input)
-                
-                # Guardar contexto para o comando /contexto
-                context = self.retriever.get_context(user_input)
-                last_context = context if context else ""
-                
                 print(f"\nDr. José: {answer}")
                 
             except KeyboardInterrupt:
                 print("\n\nAté breve!")
                 break
             except Exception as e:
-                logger.error(f"Erro inesperado no run(): {e}")
-                print("\nOcorreu um erro inesperado. Tenta novamente.")
+                print(f"\nErro: {e}")
 
 if __name__ == "__main__":
     bot = DrJoseBot()
