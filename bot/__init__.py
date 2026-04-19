@@ -1,4 +1,3 @@
-# bot/__init__.py
-from .jose import DrJoseBot as DrJose
+from .jose import DrJoseBot
 
-__all__ = ["DrJose"]
+__all__ = ["DrJoseBot"]
