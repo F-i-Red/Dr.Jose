@@ -8,3 +8,6 @@ pypdf==3.17.4
 openai==1.6.1
 python-dotenv==1.0.0
 tiktoken==0.5.2
+requests==2.31.0
+beautifulsoup4==4.12.2
+lxml==4.9.3
