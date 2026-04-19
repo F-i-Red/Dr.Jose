@@ -14,16 +14,19 @@ class Config:
 
     OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
     OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-    OPENROUTER_MODEL = "deepseek/deepseek-chat:free"   # estável e gratuito
+    
+    # Modelos gratuitos mais estáveis em abril 2026
+    OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
 
     def validate(self):
         if not self.OPENROUTER_API_KEY:
-            raise ValueError("OPENROUTER_API_KEY não encontrada no .env")
+            raise ValueError("OPENROUTER_API_KEY não encontrada no ficheiro .env")
+        
         if not self.OPENROUTER_API_KEY.startswith("sk-or-"):
-            raise ValueError("Chave OpenRouter inválida (deve começar com sk-or-)")
+            raise ValueError("Chave OpenRouter inválida. Deve começar com 'sk-or-'")
 
         # Criar pastas
-        for directory in [self.DATA_DIR, self.LEIS_DIR, self.CHROMA_DIR, self.LOGS_DIR]:
-            directory.mkdir(parents=True, exist_ok=True)
+        for d in [self.DATA_DIR, self.LEIS_DIR, self.CHROMA_DIR, self.LOGS_DIR]:
+            d.mkdir(parents=True, exist_ok=True)
 
 config = Config()
