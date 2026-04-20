@@ -1,13 +1,21 @@
+# rag/retriever.py
+
 import os
+import unicodedata
 from typing import List
 
 from chromadb import Client
 from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 
-from utils.logger import setup_logger
 
-logger = setup_logger(__name__)
+def normalize_text(text: str) -> str:
+    """Limpeza e normalização de texto"""
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFKC", text)
+    text = text.replace("\r", " ").replace("\n", " ")
+    return " ".join(text.split())
 
 
 class LegalRetriever:
@@ -19,51 +27,46 @@ class LegalRetriever:
     ):
         self.client = Client(
             Settings(
-                persist_directory=persist_directory,
-                anonymized_telemetry=False,
+                persist_directory=persist_directory
             )
         )
 
-        self.collection = self.client.get_or_create_collection(
-            name=collection_name
-        )
+        self.collection = self.client.get_or_create_collection(collection_name)
+        self.model = SentenceTransformer(model_name)
 
-        self.embedder = SentenceTransformer(model_name)
-
-        logger.info(f"✅ Coleção '{collection_name}' carregada com sucesso.")
-
-    def _embed(self, texts: List[str]):
-        return self.embedder.encode(texts).tolist()
+    def embed(self, texts: List[str]):
+        texts = [normalize_text(t) for t in texts]
+        return self.model.encode(texts, show_progress_bar=False).tolist()
 
     def add_documents(self, texts: List[str]):
         if not texts:
             return
 
-        ids = [str(i) for i in range(len(texts))]
-        embeddings = self._embed(texts)
+        embeddings = self.embed(texts)
+
+        ids = [f"doc_{i}" for i in range(len(texts))]
 
         self.collection.add(
             ids=ids,
             documents=texts,
-            embeddings=embeddings,
+            embeddings=embeddings
         )
 
-        logger.info(f"✅ Adicionados {len(texts)} documentos à base.")
+    def get_context(self, query: str, k: int = 5) -> str:
+        query = normalize_text(query)
+        if not query:
+            return ""
 
-    def query(self, question: str, k: int = 5) -> List[str]:
-        if not question.strip():
-            return ["Pergunta vazia."]
-
-        query_embedding = self._embed([question])[0]
+        embedding = self.embed([query])[0]
 
         results = self.collection.query(
-            query_embeddings=[query_embedding],
-            n_results=k,
+            query_embeddings=[embedding],
+            n_results=k
         )
 
         docs = results.get("documents", [[]])[0]
 
         if not docs:
-            return ["Nenhum artigo relevante encontrado."]
+            return ""
 
-        return docs
+        return "\n\n".join(docs)
