@@ -1,0 +1,35 @@
+# Dr. José — Dependências Python
+# Instalar com: pip install -r requirements.txt
+
+PyPDF2>=3.0.0
+docx2txt>=0.8
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# Interface web
+streamlit>=1.32.0
+
+# API backend (opcional, para integração futura)
+fastapi>=0.110.0
+uvicorn>=0.27.0
+
+# LLM e API
+openai>=1.14.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# Base vetorial (RAG)
+chromadb>=0.5.0
+
+# Embeddings multilingues
+sentence-transformers>=2.7.0
+
+# Web scraping (download automático de leis)
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# PDFs (opcional)
+# PyMuPDF>=1.24.0
+
+# Utilitários
+PyYAML>=6.0
