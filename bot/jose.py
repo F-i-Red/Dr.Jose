@@ -89,7 +89,7 @@ class DrJoseBot:
     def get_response(self, question: str) -> str:
         logger.info("A processar pergunta do utilizador...")
 
-        context_chunks = self.retriever.query(question)
+        context = self.retriever.get_context(question)
         context = "\n\n".join(context_chunks)
 
         if not context.strip():
