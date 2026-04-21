@@ -86,25 +86,25 @@ class DrJoseBot:
         logger.error("Todos os modelos falharam")
         return f"Erro: Nenhum modelo disponível.\nÚltimo erro: {last_error}"
 
-    def get_response(self, question: str) -> str:
-        logger.info("A processar pergunta do utilizador...")
+def get_response(self, question: str) -> str:
+    context = self.retriever.get_context(question)
 
-        context = self.retriever.get_context(question)
-        context = "\n\n".join(context_chunks)
+    if not context:
+        return "Não encontrei informação relevante na base de dados."
 
-        if not context.strip():
-            context = "Nenhum artigo relevante encontrado."
+    prompt = f"""
+Usa apenas o contexto abaixo para responder à pergunta.
 
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": f"Contexto legal:\n{context}\n\nPergunta:\n{question}",
-            },
-        ]
+Contexto:
+{context}
 
-        answer = self._call_llm(messages)
-        return answer
+Pergunta:
+{question}
+
+Resposta:
+"""
+
+    return self.call_model(prompt)
 
 
 # Execução direta (modo CLI)
