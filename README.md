@@ -35,37 +35,41 @@ Bot de IA especializado em direito português, com motor de busca semântica (RA
 ```bash
 git clone https://github.com/F-i-Red/Dr.Jose.git
 cd Dr.Jose
+```
 2. Criar ambiente virtual
-bash
+```
 python -m venv venv
 source venv/bin/activate  # Linux/macOS
 venv\Scripts\activate     # Windows
+```
 3. Instalar dependências
-bash
+```
 pip install -r requirements.txt
+```
 4. Configurar API Key
 Copia o ficheiro de exemplo e adiciona a tua chave da OpenRouter:
-
-bash
+```
 copy .env.example .env  # Windows
 cp .env.example .env    # Linux/macOS
+```
 Edita o .env e adiciona:
-
-ini
+```
 OPENROUTER_API_KEY=sk-or-v1-tua-chave-aqui
 OPENROUTER_MODEL=openrouter/free   # Router automático (recomendado)
+```
 Obtém a tua chave gratuita em OpenRouter Keys
 
 5. Preparar a base de conhecimento
 Coloca os ficheiros .txt das leis na pasta data/leis/ (criada automaticamente).
 
 Podes usar o script auxiliar para criar ficheiros de exemplo:
-
-bash
+```
 python scripts/fetch_laws.py
+```
 6. Indexar a legislação
-bash
+```
 python scripts/ingest.py
+```
 Este comando:
 
 ✅ Lê todos os ficheiros .txt em data/leis/
@@ -76,29 +80,32 @@ Este comando:
 
 7. Iniciar o Dr. José
 Interface Web (recomendada):
-
-bash
+```
 streamlit run app.py
+```
 O browser abrirá automaticamente em http://localhost:8501
 
 Interface de Linha de Comando (alternativa):
-
-bash
+```
 python -m bot.jose
+```
 Windows (atalho):
-
-batch
+```
 iniciar.bat
-🎮 Comandos do Chat (apenas no modo CLI)
-Comando	Função
-/ajuda	Mostrar ajuda
-/historico	Ver histórico da conversa
-/limpar	Limpar histórico
-/sair	Sair do programa
-No modo Streamlit, a interface é gráfica e não necessita de comandos especiais.
+```
 
-📁 Estrutura do Projeto
-text
+## 🎮 Comandos do Chat (apenas no modo CLI)
+| Comando |	Função |
+| --- | --- |
+| /ajuda	| Mostrar ajuda |
+| /historico	| Ver histórico da conversa |
+| /limpar	| Limpar histórico |
+| /sair	| Sair do programa |
+
+## No modo Streamlit, a interface é gráfica e não necessita de comandos especiais.
+
+## 📁 Estrutura do Projeto
+```
 dr-jose/
 ├── app.py                  # Interface web (Streamlit)
 ├── bot/
@@ -122,17 +129,20 @@ dr-jose/
 ├── iniciar.bat             # Inicializador para Windows
 ├── requirements.txt        # Dependências Python
 └── README.md
-🔧 Configuração Avançada
+```
+## 🔧 Configuração Avançada
 No ficheiro .env podes ajustar:
-
-ini
+```
 # Modelo a utilizar (fallback automático no jose.py)
 OPENROUTER_MODEL=openrouter/free
-
+```
 # Opções alternativas (descomenta uma):
+```
 # OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct:free
 # OPENROUTER_MODEL=nvidia/nemotron-3-super-120b-a12b:free
-🛠️ Resolução de Problemas
+```
+
+## 🛠️ Resolução de Problemas
 "OPENROUTER_API_KEY não definida"
 Verifica se o ficheiro .env existe na raiz do projeto
 
@@ -153,20 +163,31 @@ Usa openrouter/free (router automático) ou atualiza o modelo no .env
 Aguarda alguns minutos se estiver em rate limit
 
 Erro ao instalar dependências
-bash
+```
 pip install --upgrade pip
 pip install -r requirements.txt --no-cache-dir
-⚠️ Aviso Legal
+```
+## ⚠️ Aviso Legal
 Este sistema fornece informação jurídica de caráter geral e educativo.
 
 Não substitui aconselhamento jurídico profissional.
 
-Para situações específicas, consulte um advogado licenciado pela Ordem dos Advogados.
+## Para situações específicas, consulte um advogado licenciado pela [Ordem dos Advogados](https://www.oa.pt).
 
-📄 Licença
+---
+
+## Fontes Legais Oficiais
+
+- [Diário da República Eletrónico](https://dre.pt)
+- [Procuradoria-Geral Distrital de Lisboa](http://www.pgdlisboa.pt/leis/lei_main.php)
+- [Autoridade Tributária e Aduaneira](https://info.portaldasfinancas.gov.pt)
+
+---
+
+## 📄 Licença
 MIT License - ver LICENSE
 
-🙏 Agradecimentos
+### 🙏 Agradecimentos
 OpenRouter - API de modelos LLM
 
 ChromaDB - Base vetorial
@@ -175,17 +196,6 @@ Streamlit - Interface web
 
 Desenvolvido com ❤️ para acesso à justiça em Portugal
 
-## Fontes Legais Oficiais
-
-- [Diário da República Eletrónico](https://dre.pt)
-- [Procuradoria-Geral Distrital de Lisboa](http://www.pgdlisboa.pt/leis/lei_main.php)
-- [Autoridade Tributária e Aduaneira](https://info.portaldasfinancas.gov.pt)
-
-## Aviso Legal
-
-Este sistema fornece informação jurídica de caráter geral e educativo.
-**Não substitui** aconselhamento jurídico profissional.
-Para situações específicas, consulte um advogado licenciado pela [Ordem dos Advogados](https://www.oa.pt).
-
 ---
+
 Desenvolvido com Python · ChromaDB · OpenRouter API
