@@ -74,8 +74,8 @@ Estrutura recomendada (mas não obrigatória):
                 response = self.client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    temperature=0.3,
-                    max_tokens=1024,   # ← VALOR CORRIGIDO (era 350-500)
+                    temperature=0.25,
+                    max_tokens=1280,   # ← VALOR CORRIGIDO (era 350-500)
                     timeout=45
                 )
                 answer = response.choices[0].message.content.strip()
