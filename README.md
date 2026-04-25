@@ -199,3 +199,6 @@ Desenvolvido com ❤️ para acesso à justiça em Portugal
 ---
 
 Desenvolvido com Python · ChromaDB · OpenRouter API
+
+---
+https://carrd.co/dashboard/3156177569551545/build
